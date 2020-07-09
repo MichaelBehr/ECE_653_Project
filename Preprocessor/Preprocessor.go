@@ -1,145 +1,125 @@
 package Preprocessor
 
-import "sort"
+import (
+	"fmt"
+	"log"
+)
 
-type decLevel int
-type Lit int32
-type Var int32
+//
 
-// Utility functions for pre-processor inpsired by implementations/pseudocode from http://fmv.jku.at/papers/EenBiere-SAT05.pdf,
-// MaxSatPreprocessor and GopherSat
+// UTILITY FUNCTIONS AND STRUCTURES
 
-// clause structure
-type Clause struct {
-	lits []Lit
+type Status byte
+
+// A Problem is a list of clauses & a number of vars.
+type Problem struct {
+	NbVars     int        // Total number of vars
+	Clauses    []*Clause  // List of non-empty, non-unit clauses
+	Status     Status     // Status of the problem. Can be trivially UNSAT (if empty clause was met or inferred by UP) or Indet.
+	Units      []Lit      // List of unit literal found in the problem.
+	Model      []decLevel // For each var, its inferred binding. 0 means unbound, 1 means bound to true, -1 means bound to false.
+	minLits    []Lit      // For an optimisation problem, the list of lits whose sum must be minimized
+	minWeights []int      // For an optimisation problem, the weight of each lit.
 }
 
-
-// returns number of literals in the clause
-func (c *Clause) Len() int {
-	return len(c.lits)
-}
-
-// sorts the literals in the clause
-func (c *Clause) Sort(){
-	sort.Slice(c.lits, func(i, j int) bool {
-		return c.lits[i] < c.lits[j]
-	})
-}
-
-// IntToLit converts a CNF literal to a Lit.
-func IntToLit(i int32) Lit {
-	if i < 0 {
-		return Lit(2*(-i-1) + 1)
+// CNF returns a DIMACS CNF representation of the problem.
+func (pb *Problem) CNF() string {
+	res := fmt.Sprintf("p cnf %d %d\n", pb.NbVars, len(pb.Clauses)+len(pb.Units))
+	for _, unit := range pb.Units {
+		res += fmt.Sprintf("%d 0\n", unit.Int())
 	}
-	return Lit(2 * (i - 1))
-}
-
-func (l Lit) Negation() Lit {
-	// bitwise XOR on the literal. Remember we have encoded it as a 32bit integer
-	return l ^ 1
-}
-
-func (l Lit) Var() Var {
-	return Var(l / 2)
-}
-
-//////
-
-// Function Subsumes will return true iff c subsumes c2
-// also assumes we have sorted the literals in the clause
-func (c *Clause) Subsumes(c2 *Clause) bool {
-	// size of c must be less than c2
-	if c.Len() > c2.Len() {
-		return false
+	for _, clause := range pb.Clauses {
+		res += fmt.Sprintf("%s\n", clause.CNF())
 	}
-	for _, lit := range c.lits {
-		match := false
-		for _, lit2 := range c2.lits {
-			if lit == lit2 {
-				match = true
-				break
-			}
-			// we will not find a matching literal anymore so return false
-			if lit2 > lit {
-				return false
-			}
-		}
-		// if for any literal in clause c, there is no match in clause c2 return false
-		if !match {
-			return false
+	return res
+}
+
+//
+
+
+func (pb *Problem) preprocess() {
+	log.Printf("Preprocessing... %d clauses currently", len(pb.Clauses))
+	occurs := make([][]int, pb.NbVars*2)
+	for i, c := range pb.Clauses {
+		for j := 0; j < c.Len(); j++ {
+			occurs[c.Get(j)] = append(occurs[c.Get(j)], i)
 		}
 	}
-	return true
-}
-
-// SelfSubsumes returns true iff c self-subsumes c2.
-func (c *Clause) SelfSubsumes(c2 *Clause) bool {
-	oneNeg := false
-	for _, lit := range c.lits {
-		found := false
-		for _, lit2 := range c2.lits {
-			if lit == lit2 {
-				found = true
-				break
+	modified := true
+	neverModified := true
+	for modified {
+		modified = false
+		for i := 0; i < pb.NbVars; i++ {
+			if pb.Model[i] != 0 {
+				continue
 			}
-			if lit == lit2.Negation() {
-				// we only want one matching negative literal
-				if oneNeg {
-					return false
+			v := Var(i)
+			lit := v.Lit()
+			nbLit := len(occurs[lit])
+			nbLit2 := len(occurs[lit.Negation()])
+			if (nbLit < 10 || nbLit2 < 10) && (nbLit != 0 || nbLit2 != 0) {
+				modified = true
+				neverModified = false
+				// pb.deleted[v] = true
+				log.Printf("%d can be removed: %d and %d", lit.Int(), len(occurs[lit]), len(occurs[lit.Negation()]))
+				for _, idx1 := range occurs[lit] {
+					for _, idx2 := range occurs[lit.Negation()] {
+						c1 := pb.Clauses[idx1]
+						c2 := pb.Clauses[idx2]
+						newC := c1.Generate(c2, v)
+						if !newC.Simplify() {
+							switch newC.Len() {
+							case 0:
+								log.Printf("Inferred UNSAT")
+								pb.Status = Unsat
+								return
+							case 1:
+								log.Printf("Unit %d", newC.First().Int())
+								lit2 := newC.First()
+								if lit2.IsPositive() {
+									if pb.Model[lit2.Var()] == -1 {
+										pb.Status = Unsat
+										return
+									}
+									pb.Model[lit2.Var()] = 1
+								} else {
+									if pb.Model[lit2.Var()] == 1 {
+										pb.Status = Unsat
+										return
+									}
+									pb.Model[lit2.Var()] = -1
+								}
+								pb.Units = append(pb.Units, lit2)
+							default:
+								pb.Clauses = append(pb.Clauses, newC)
+							}
+						}
+					}
 				}
-				oneNeg = true
-				found = true
-				break
+				nbRemoved := 0
+				for _, idx := range occurs[lit] {
+					pb.Clauses[idx] = pb.Clauses[len(pb.Clauses)-nbRemoved-1]
+					nbRemoved++
+				}
+				for _, idx := range occurs[lit.Negation()] {
+					pb.Clauses[idx] = pb.Clauses[len(pb.Clauses)-nbRemoved-1]
+					nbRemoved++
+				}
+				pb.Clauses = pb.Clauses[:len(pb.Clauses)-nbRemoved]
+				log.Printf("clauses=%s", pb.CNF())
+				// Redo occurs
+				occurs = make([][]int, pb.NbVars*2)
+				for i, c := range pb.Clauses {
+					for j := 0; j < c.Len(); j++ {
+						occurs[c.Get(j)] = append(occurs[c.Get(j)], i)
+					}
+				}
+				continue
 			}
-			// We won't find it anymore
-			if lit2 > lit {
-				return false
-			}
-		}
-		if !found {
-			return false
 		}
 	}
-	return oneNeg
-}
-
-// Simplify simplifies the given clause by removing redundant lits.
-// If the clause is trivially satisfied (i.e contains both a lit and its negation),
-// true is returned. Otherwise, false is returned.
-func (c *Clause) Simplify() (isSat bool) {
-	c.Sort()
-	lits := make([]Lit, 0, len(c.lits))
-	i := 0
-	for i < len(c.lits) {
-		if i < len(c.lits)-1 && c.lits[i] == c.lits[i+1].Negation() {
-			return true
-		}
-		lit := c.lits[i]
-		lits = append(lits, lit)
-		i++
-		for i < len(c.lits) && c.lits[i] == lit {
-			i++
-		}
+	if !neverModified {
+		log.Printf("There was no modifications to the boolean formula.")
 	}
-	if len(lits) < len(c.lits) {
-		c.lits = lits
-	}
-	return false
-}
-
-// Generate returns a subsumed clause from c and c2, by removing v.
-func (c *Clause) Generate(c2 *Clause, v Var) *Clause {
-	c3 := &Clause{lits: make([]Lit, 0, len(c.lits)+len(c2.lits)-2)}
-	for _, lit := range c.lits {
-		if lit.Var() != v {
-			c3.lits = append(c3.lits, lit)
-		}
-	}
-	for _, lit2 := range c2.lits {
-		if lit2.Var() != v {
-			c3.lits = append(c3.lits, lit2)
-		}
-	}
-	return c3
+	log.Printf("Done. %d clauses now", len(pb.Clauses))
 }
