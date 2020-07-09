@@ -97,6 +97,7 @@ func ParseCNF(f io.Reader) (*Problem, error) {
 			lits := make([]Lit, 0, 3) // Make room for some lits to improve performance
 			for {
 				val, err := readInt(&b, r)
+				fmt.Printf("Value: " + string(val))
 				if err == io.EOF {
 					if len(lits) != 0 { // This is not a trailing space at the end...
 						return nil, fmt.Errorf("unfinished clause while EOF found")

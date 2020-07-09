@@ -61,7 +61,7 @@ func (pb *Problem) addUnit(lit Lit) {
 }
 
 // simplify simplifies the pure SAT problem, i.e runs unit propagation if possible.
-func (pb *Problem) simplify2() {
+func (pb *Problem) Simplify2() {
 	nbClauses := len(pb.Clauses)
 	restart := true
 	for restart {
@@ -111,7 +111,7 @@ func (pb *Problem) simplify2() {
 
 // Preprocess main function
 
-func (pb *Problem) preprocess() {
+func (pb *Problem) Preprocess() {
 	log.Printf("Preprocessing... %d clauses currently", len(pb.Clauses))
 	occurs := make([][]int, pb.NbVars*2)
 	for i, c := range pb.Clauses {
@@ -155,12 +155,14 @@ func (pb *Problem) preprocess() {
 								if lit2.IsPositive() {
 									if pb.Model[lit2.Var()] == -1 {
 										pb.Status = Unsat
+										log.Printf("Inferred UNSAT")
 										return
 									}
 									pb.Model[lit2.Var()] = 1
 								} else {
 									if pb.Model[lit2.Var()] == 1 {
 										pb.Status = Unsat
+										log.Printf("Inferred UNSAT")
 										return
 									}
 									pb.Model[lit2.Var()] = -1
@@ -195,7 +197,7 @@ func (pb *Problem) preprocess() {
 		}
 	}
 	if !neverModified {
-		log.Printf("There was no modifications to the boolean formula.")
+		pb.Simplify2()
 	}
 	log.Printf("Done. %d clauses now", len(pb.Clauses))
 }

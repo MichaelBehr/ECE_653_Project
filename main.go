@@ -1,23 +1,18 @@
-package Preprocessor
+package main
 
 import (
 	"flag"
 	"fmt"
 	"os"
-	"runtime/debug"
 	"strings"
+
+	"Preprocessor"
 )
 
 func main() {
-	// defer profile.Start().Stop()
-	debug.SetGCPercent(300)
 	var (
-		verbose bool
-		count   bool
 		help    bool
 	)
-	flag.BoolVar(&verbose, "verbose", false, "sets verbose mode on")
-	flag.BoolVar(&count, "count", false, "rather than solving the problem, counts the number of models it accepts")
 	flag.BoolVar(&help, "help", false, "displays help")
 	flag.Parse()
 	if !help && len(flag.Args()) != 1 {
@@ -39,21 +34,24 @@ func main() {
 			fmt.Fprintf(os.Stderr, "could not parse problem: %v\n", err)
 			os.Exit(1)
 		} else {
-			fmt.Printf("CNF FORMULA:\n\n",pb.CNF())
+			fmt.Printf("\nCNF FORMULA:\n\n",pb.CNF())
+			// run pre-processing
+			pb.Preprocess()
+			fmt.Printf("\nSIMPLIFIED FORMULA:\n\n",pb.CNF())
 		}
 	} else{
 		fmt.Fprintf(os.Stderr, "Could not parse problem. Make sure it is in CNF form.")
 	}
 
 }
-func parse(path string) (pb *Problem, err error) {
+func parse(path string) (pb *Preprocessor.Problem, err error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("could not open %q: %v", path, err)
 	}
 	defer f.Close()
 	if strings.HasSuffix(path, ".cnf") {
-		pb, err := ParseCNF(f)
+		pb, err := Preprocessor.ParseCNF(f)
 		if err != nil {
 			return nil, fmt.Errorf("could not parse DIMACS file %q: %v", path, err)
 		}
