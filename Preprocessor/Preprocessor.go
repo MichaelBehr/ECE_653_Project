@@ -34,8 +34,82 @@ func (pb *Problem) CNF() string {
 	return res
 }
 
-//
+///// PROBLEM UTILITY FUNCTIONS FROM GOPHERSAT
 
+func (pb *Problem) updateStatus(nbClauses int) {
+	pb.Clauses = pb.Clauses[:nbClauses]
+	if pb.Status == Undetermined && nbClauses == 0 {
+		pb.Status = Sat
+	}
+}
+
+func (pb *Problem) addUnit(lit Lit) {
+	if lit.IsPositive() {
+		if pb.Model[lit.Var()] == -1 {
+			pb.Status = Unsat
+			return
+		}
+		pb.Model[lit.Var()] = 1
+	} else {
+		if pb.Model[lit.Var()] == 1 {
+			pb.Status = Unsat
+			return
+		}
+		pb.Model[lit.Var()] = -1
+	}
+	pb.Units = append(pb.Units, lit)
+}
+
+// simplify simplifies the pure SAT problem, i.e runs unit propagation if possible.
+func (pb *Problem) simplify2() {
+	nbClauses := len(pb.Clauses)
+	restart := true
+	for restart {
+		restart = false
+		i := 0
+		for i < nbClauses {
+			c := pb.Clauses[i]
+			nbLits := c.Len()
+			clauseSat := false
+			j := 0
+			for j < nbLits {
+				lit := c.Get(j)
+				if pb.Model[lit.Var()] == 0 {
+					j++
+				} else if (pb.Model[lit.Var()] == 1) == lit.IsPositive() {
+					clauseSat = true
+					break
+				} else {
+					nbLits--
+					c.Set(j, c.Get(nbLits))
+				}
+			}
+			if clauseSat {
+				nbClauses--
+				pb.Clauses[i] = pb.Clauses[nbClauses]
+			} else if nbLits == 0 {
+				pb.Status = Unsat
+				return
+			} else if nbLits == 1 { // UP
+				pb.addUnit(c.First())
+				if pb.Status == Unsat {
+					return
+				}
+				nbClauses--
+				pb.Clauses[i] = pb.Clauses[nbClauses]
+				restart = true // Must restart, since this lit might have made one more clause Unit or SAT.
+			} else { // nb lits unbound > cardinality
+				if c.Len() != nbLits {
+					c.Shrink(nbLits)
+				}
+				i++
+			}
+		}
+	}
+	pb.updateStatus(nbClauses)
+}
+
+// Preprocess main function
 
 func (pb *Problem) preprocess() {
 	log.Printf("Preprocessing... %d clauses currently", len(pb.Clauses))
@@ -57,6 +131,7 @@ func (pb *Problem) preprocess() {
 			lit := v.Lit()
 			nbLit := len(occurs[lit])
 			nbLit2 := len(occurs[lit.Negation()])
+			// slow method is only effective with less than 10 literals
 			if (nbLit < 10 || nbLit2 < 10) && (nbLit != 0 || nbLit2 != 0) {
 				modified = true
 				neverModified = false
@@ -66,6 +141,7 @@ func (pb *Problem) preprocess() {
 					for _, idx2 := range occurs[lit.Negation()] {
 						c1 := pb.Clauses[idx1]
 						c2 := pb.Clauses[idx2]
+						// generate new clause with self-subsuming resolution
 						newC := c1.Generate(c2, v)
 						if !newC.Simplify() {
 							switch newC.Len() {

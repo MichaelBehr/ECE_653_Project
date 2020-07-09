@@ -20,9 +20,16 @@ const (
 // Utility functions for pre-processor inpsired by implementations/pseudocode from http://fmv.jku.at/papers/EenBiere-SAT05.pdf,
 // MaxSatPreprocessor and GopherSat
 
+// data used in Pseudo Boolean constraints.
+type pbData struct {
+	weights []int  // weight of each literal. If nil, weights are all 1.
+	watched []bool // indices of watched literals.
+}
+
 // clause structure
 type Clause struct {
 	lits []Lit
+	pbData   *pbData
 }
 
 // First returns the first literal from the clause.
@@ -45,6 +52,26 @@ func (c *Clause) Sort(){
 	sort.Slice(c.lits, func(i, j int) bool {
 		return c.lits[i] < c.lits[j]
 	})
+}
+
+// Set sets the ith literal of the clause.
+func (c *Clause) Set(i int, l Lit) {
+	c.lits[i] = l
+}
+
+// Shrink reduces the length of the clauses, by removing all lits
+// starting from position newLen.
+func (c *Clause) Shrink(newLen int) {
+	c.lits = c.lits[:newLen]
+	if c.pbData != nil {
+		c.pbData.weights = c.pbData.weights[:newLen]
+		c.pbData.watched = c.pbData.watched[:newLen]
+	}
+}
+
+// NewClause returns a clause whose lits are given as an argument.
+func NewClause(lits []Lit) *Clause {
+	return &Clause{lits: lits}
 }
 
 // IntToLit converts a CNF literal to a Lit.
